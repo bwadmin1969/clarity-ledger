@@ -126,6 +126,8 @@ export default function LedgerApp() {
   const [miningInfo, setMiningInfo] = useState(null);
   const [difficulty, setDifficulty] = useState(3);
   const [pulses, setPulses] = useState([]);
+  const [autoMineIds, setAutoMineIds] = useState({ alice: false, bob: false, carol: false });
+  const lastAutoRef = useRef(null);
   const [log, setLog] = useState([{ id: 0, ts: Date.now(), text: 'Network initialized — 3 wallets created, genesis block sealed.' }]);
   const [txTo, setTxTo] = useState('bob');
   const [txAmount, setTxAmount] = useState(10);
@@ -171,9 +173,8 @@ export default function LedgerApp() {
     addLog(`${NODE_MAP[fromId].name} → ${NODE_MAP[txTo].name}: ${amount} CLR, broadcast to mempool (unconfirmed).`);
   }
 
-  async function mine() {
+  async function mine(minerId = selected) {
     if (miningNode) return;
-    const minerId = selected;
     setMiningNode(minerId);
     setMiningInfo({ nonce: 0, hash: '' });
 
@@ -239,6 +240,36 @@ export default function LedgerApp() {
     addLog(`↳ ${NODE_MAP[pulse.targetId].name} received & verified block #${pulse.height - 1}.`);
   }
 
+  function toggleAutoMine(id) {
+    setAutoMineIds((prev) => {
+      const next = { ...prev, [id]: !prev[id] };
+      addLog(`${NODE_MAP[id].name}'s auto-mining turned ${next[id] ? 'on' : 'off'}.`);
+      return next;
+    });
+  }
+
+  // Keeps mining running on its own: whenever no block is currently being
+  // mined, pick the next wallet (round-robin) that has auto-mine enabled
+  // and start it. Stops naturally once nothing is enabled.
+  useEffect(() => {
+    if (miningNode) return;
+    const order = NODES.map((n) => n.id);
+    const activeIds = order.filter((id) => autoMineIds[id]);
+    if (activeIds.length === 0) return;
+    let nextIdx = 0;
+    if (lastAutoRef.current) {
+      const idx = activeIds.indexOf(lastAutoRef.current);
+      nextIdx = idx >= 0 ? (idx + 1) % activeIds.length : 0;
+    }
+    const nextId = activeIds[nextIdx];
+    const t = setTimeout(() => {
+      lastAutoRef.current = nextId;
+      mine(nextId);
+    }, 900);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [miningNode, autoMineIds]);
+
   function resetNetwork() {
     setChain([GENESIS]);
     setNodeSync({ alice: 1, bob: 1, carol: 1 });
@@ -246,6 +277,7 @@ export default function LedgerApp() {
     setPulses([]);
     setMiningNode(null);
     setMiningInfo(null);
+    setAutoMineIds({ alice: false, bob: false, carol: false });
     setLog([{ id: logIdRef.current++, ts: Date.now(), text: 'Network reset — chain cleared, wallets kept.' }]);
   }
 
@@ -409,7 +441,17 @@ export default function LedgerApp() {
                     <GemMark size={13} color={n.color} lit={COLORS.verdigris} />
                     {n.name}
                   </span>
-                  {isMining && <Pickaxe size={12} color={COLORS.brass} className="animate-pulse" />}
+                  <div className="flex items-center gap-1">
+                    {autoMineIds[n.id] && (
+                      <span
+                        className="text-[8px] px-1.5 py-0.5 rounded-full"
+                        style={{ background: `${COLORS.verdigris}22`, color: COLORS.verdigris }}
+                      >
+                        AUTO
+                      </span>
+                    )}
+                    {isMining && <Pickaxe size={12} color={COLORS.brass} className="animate-pulse" />}
+                  </div>
                 </div>
                 <div className="mono text-[10px]" style={{ color: COLORS.boneDim }}>{short(addresses[n.id], 5, 4)}</div>
                 <div className="fr text-lg mt-1" style={{ color: COLORS.bone }}>{balanceForNode(n.id)} <span className="text-xs" style={{ color: COLORS.boneDim }}>CLR</span></div>
@@ -493,8 +535,21 @@ export default function LedgerApp() {
                   ))}
                 </div>
               </div>
+              <div className="flex items-center justify-between mb-2 mt-3">
+                <span className="text-xs" style={{ color: COLORS.boneDim }}>Auto-mine for {selectedNode.name}</span>
+                <button
+                  onClick={() => toggleAutoMine(selected)}
+                  className="text-[10px] px-3 py-1 rounded-full"
+                  style={{
+                    background: autoMineIds[selected] ? COLORS.verdigris : COLORS.panel2,
+                    color: autoMineIds[selected] ? COLORS.bg : COLORS.boneDim,
+                  }}
+                >
+                  {autoMineIds[selected] ? 'On' : 'Off'}
+                </button>
+              </div>
               <button
-                onClick={mine}
+                onClick={() => mine()}
                 disabled={!!miningNode}
                 className="w-full flex items-center justify-center gap-2 text-sm py-2.5 rounded-md font-medium"
                 style={{ background: COLORS.brass, color: COLORS.bg, opacity: miningNode && miningNode !== selected ? 0.5 : 1 }}
@@ -507,6 +562,11 @@ export default function LedgerApp() {
               {miningNode === selected && miningInfo && (
                 <div className="mono text-[10px] mt-2 truncate" style={{ color: COLORS.boneDim }}>
                   {miningInfo.hash}
+                </div>
+              )}
+              {autoMineIds[selected] && (
+                <div className="text-[10px] mt-2" style={{ color: COLORS.verdigris }}>
+                  Auto-mining — will keep mining new blocks on its own, in rotation with any other wallet that also has it on.
                 </div>
               )}
             </div>
