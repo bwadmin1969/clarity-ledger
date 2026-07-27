@@ -40,6 +40,27 @@ function randomAddress() {
   return '0x' + Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+const STORAGE_KEY = 'clarity-ledger-v1';
+
+function loadSaved() {
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveState(state) {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // storage unavailable (e.g. private browsing) — fail silently, nothing to persist to
+  }
+}
+
+const SAVED = typeof window !== 'undefined' ? loadSaved() : null;
+
 async function sha256Hex(str) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
   return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -114,19 +135,19 @@ function GemMark({ size = 16, color = COLORS.brass, lit = COLORS.verdigris, mute
 }
 
 export default function LedgerApp() {
-  const [addresses] = useState(() =>
-    Object.fromEntries(NODES.map((n) => [n.id, randomAddress()]))
+  const [addresses] = useState(
+    () => SAVED?.addresses || Object.fromEntries(NODES.map((n) => [n.id, randomAddress()]))
   );
-  const [chain, setChain] = useState([GENESIS]);
-  const [nodeSync, setNodeSync] = useState({ alice: 1, bob: 1, carol: 1 });
-  const [mempool, setMempool] = useState([]);
-  const [selected, setSelected] = useState('alice');
-  const [loggedInId, setLoggedInId] = useState(null);
+  const [chain, setChain] = useState(() => SAVED?.chain || [GENESIS]);
+  const [nodeSync, setNodeSync] = useState(() => SAVED?.nodeSync || { alice: 1, bob: 1, carol: 1 });
+  const [mempool, setMempool] = useState(() => SAVED?.mempool || []);
+  const [selected, setSelected] = useState(() => SAVED?.selected || SAVED?.loggedInId || 'alice');
+  const [loggedInId, setLoggedInId] = useState(() => SAVED?.loggedInId || null);
   const [miningNode, setMiningNode] = useState(null);
   const [miningInfo, setMiningInfo] = useState(null);
   const [difficulty, setDifficulty] = useState(3);
   const [pulses, setPulses] = useState([]);
-  const [autoMineIds, setAutoMineIds] = useState({ alice: false, bob: false, carol: false });
+  const [autoMineIds, setAutoMineIds] = useState(() => SAVED?.autoMineIds || { alice: false, bob: false, carol: false });
   const lastAutoRef = useRef(null);
   const [log, setLog] = useState([{ id: 0, ts: Date.now(), text: 'Network initialized — 3 wallets created, genesis block sealed.' }]);
   const [txTo, setTxTo] = useState('bob');
@@ -144,6 +165,13 @@ export default function LedgerApp() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected]);
+
+  // Persist to localStorage whenever the ledger actually changes, so
+  // balances/chain/login survive a page refresh.
+  useEffect(() => {
+    saveState({ addresses, chain, nodeSync, mempool, autoMineIds, loggedInId, selected });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chain, nodeSync, mempool, autoMineIds, loggedInId, selected]);
 
   const chainForNode = (id) => chain.slice(0, nodeSync[id]);
   const balanceForNode = (id) => balanceAt(chainForNode(id), addresses[id]);
